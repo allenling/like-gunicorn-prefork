@@ -19,7 +19,7 @@ class Master(object):
             self.SIGNALS[sig] = ('SIG%s' % i).lower()
         '''
         Master signal list, we deal with signals serially
-        If process signal asynchronously, process a term signal while a ttin signal still be processing, that is unexpected
+        If process signal asynchronously, processing a term signal while a ttin signal still be processing, that is unexpected
         '''
         self.signals = deque([])
         self.workers = {}
@@ -34,6 +34,7 @@ class Master(object):
         self.init_signals()
         self.manage_workers()
         while True:
+            # simply sleep, no select on pip
             time.sleep(1)
             # process signals serially
             sig = self.signals.popleft() if self.signals else None
