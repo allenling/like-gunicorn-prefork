@@ -1,6 +1,7 @@
 # coding=utf-8
 from __future__ import unicode_literals
 from __future__ import absolute_import
+from collections import deque
 import os
 import time
 import signal
@@ -12,11 +13,19 @@ class Master(object):
 
     def __init__(self, worker_number):
         self.worker_number = worker_number
-        self.SIGNALS = []
+        self.SIGNALS = {}
+        for i in "HUP QUIT INT TERM TTIN TTOU CHLD".split():
+            sig = getattr(signal, "SIG%s" % i)
+            self.SIGNALS[sig] = ('SIG%s' % i).lower()
+        '''
+        Master signal list, we deal with signals serially
+        If process signal asynchronously, process a term signal while a ttin signal still be processing, that is unexpected
+        '''
+        self.signals = deque([])
         self.workers = {}
 
     def start(self):
-        # initial resources, like create connection vers
+        # initial resources, like create a connection vers
         pass
 
     def run(self):
@@ -25,23 +34,53 @@ class Master(object):
         self.init_signals()
         self.manage_workers()
         while True:
-            time.sleep(10)
-            # monitor workers
-            self.manage_workers()
+            time.sleep(1)
+            # process signals serially
+            sig = self.signals.popleft() if self.signals else None
+            if sig is None:
+                # kill timeout worker
+                self.checkout_timeout_worker()
+                # monitor workers
+                self.manage_workers()
+                continue
+            # handle signal
+            if sig not in self.SIGNALS:
+                print 'unsupport signal %s' % sig
+                continue
+            sig_name = self.SIGNALS.get(sig)
+            sig_method = getattr(self, sig_name, None)
+            if sig_method is None:
+                print 'this is no any method to handle signal %s' % sig_name
+                continue
+            sig_method()
+
+    def handle_signal(self, sig_number, frame):
+        self.signals.append(sig_number)
+
+    def checkout_timeout_worker(self):
+        '''
+        check if this is any worker doing something too long and kill it
+        '''
+        pass
 
     def init_signals(self):
         '''
         signal handler
         '''
-        signal.signal(signal.SIGCHLD, self.sigchild)
+        for sig in self.SIGNALS:
+            signal.signal(sig, self.handle_signal)
+        # we would not deal with SIGCHLD in a difference way, just deal with it like other signals
+        # signal.signal(signal.SIGCHLD, self.sigchild)
 
     def manage_workers(self):
         '''
         increase/decrease workers
         '''
         if len(self.workers) < self.worker_number:
+            print 'spawn workers'
             self.spawn_workers()
         elif len(self.workers) > self.worker_number:
+            print 'kill extra workers'
             self.kill_workers()
 
     def spawn_workers(self):
@@ -68,12 +107,15 @@ class Master(object):
         '''
         pass
 
-    def sigchild(self, signum, frame):
+    def sigchld(self):
         '''
         When a worker process dead, kernel will send SIGCHD to parent process, and parent process should call wait/waitpid to term
         worker process which is dead completely to avoid zombie process
+
         And then, we should call manage_workers to start a new worker process if there is a dead worker process indeed
         Like gunicorn, just wake up master by writing a pipe to manager_workers or call manager_workers directly
+
+        Or we just do noting, cause next loop in run method would call manage_workers
         '''
         try:
             while True:
@@ -86,7 +128,7 @@ class Master(object):
         except OSError as e:
             if e.error != errno.ECHILD:
                 raise
-        self.manage_workers()
+        # self.manage_workers()
 
 if __name__ == '__main__':
     master = Master(2)
