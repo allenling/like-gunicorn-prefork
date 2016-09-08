@@ -6,6 +6,7 @@ import os
 import time
 import signal
 import errno
+import sys
 from worker import Worker
 
 
@@ -30,30 +31,36 @@ class Master(object):
 
     def run(self):
         # run will loop to monitor workers
+        print 'master %s' % os.getpid()
         self.start()
         self.init_signals()
-        self.manage_workers()
-        while True:
-            # simply sleep, no select on pip
-            time.sleep(1)
-            # process signals serially
-            sig = self.signals.popleft() if self.signals else None
-            if sig is None:
-                # kill timeout worker
-                self.checkout_timeout_worker()
-                # monitor workers
-                self.manage_workers()
-                continue
-            # handle signal
-            if sig not in self.SIGNALS:
-                print 'unsupport signal %s' % sig
-                continue
-            sig_name = self.SIGNALS.get(sig)
-            sig_method = getattr(self, sig_name, None)
-            if sig_method is None:
-                print 'this is no any method to handle signal %s' % sig_name
-                continue
-            sig_method()
+        try:
+            self.manage_workers()
+            while True:
+                # simply sleep, no select on pip
+                # processing signal delay, that is acceptable for a simple model
+                time.sleep(1)
+                # process signals serially
+                sig = self.signals.popleft() if self.signals else None
+                if sig is None:
+                    # kill timeout worker
+                    self.checkout_timeout_worker()
+                    # monitor workers
+                    self.manage_workers()
+                    continue
+                # handle signal
+                if sig not in self.SIGNALS:
+                    print 'unsupport signal %s' % sig
+                    continue
+                sig_name = self.SIGNALS.get(sig)
+                sig_method = getattr(self, sig_name, None)
+                if sig_method is None:
+                    print 'this is no any method to handle signal %s' % sig_name
+                    continue
+                sig_method()
+        except SystemExit:
+            print 'in %s run exit' % os.getpid()
+            sys.exit(-1)
 
     def handle_signal(self, sig_number, frame):
         self.signals.append(sig_number)
@@ -82,7 +89,6 @@ class Master(object):
             self.spawn_workers()
         elif len(self.workers) > self.worker_number:
             print 'kill extra workers'
-            self.kill_workers()
 
     def spawn_workers(self):
         '''
@@ -94,19 +100,45 @@ class Master(object):
             if pid != 0:
                 self.workers[pid] = worker_object
             else:
-                worker_object.run()
+                try:
+                    '''
+                    Once any one worker be killed by term/int/quit/abort, the master would go down. is that right?
+                    Or shutodown master till be sent a term/int/quit/abort signal, and killing a worker would not kill the whole master
+                    --------that-----is--------totally-----wrong-------
+                    But, every word about child dead, parent dead above is wrong, cause when i use pydev run gunicorn with debug, parent process dead indeed
+                    and run gunuicorn with pydev run is find.
+                    '''
+                    # worker raise SystemExit to exit
+                    worker_object.run()
+                    # worker return normally, call sys.exit to raise to exit the whole master
+                    sys.exit(0)
+                except SystemExit:
+                    raise
+                except Exception, e:
+                    print 'worker %s exception, %s' % (os.getpid(), e)
+                    # worker raise Exception, just exit
+                    sys.exit(-1)
+                finally:
+                    # log error
+                    print 'worker %s exiting' % os.getpid()
 
-    def kill_workers(self):
+    def kill_workers(self, gracefully=True):
         '''
-        kill workers
+        kill workers, send SIGTERM if gracefully else SIGKILL(can not be catch by program)
         '''
-        pass
+        worker_pids = self.workers.keys()
+        for worker_pid in worker_pids:
+            self.kill_worker(worker_pid, gracefully=gracefully)
 
-    def kill_worker(self, pid):
+    def kill_worker(self, pid, gracefully=True):
         '''
-        kill a single worker
+        kill a single worker, send SIGTERM if gracefully else SIGKILL(can not be catch by program)
         '''
-        pass
+        sig = signal.SIGTERM if gracefully else signal.SIGKILL
+        try:
+            os.kill(pid, sig)
+        except Exception, e:
+            pass
 
     def sigchld(self):
         '''
@@ -133,4 +165,4 @@ class Master(object):
 
 if __name__ == '__main__':
     master = Master(2)
-    master.run()
+    sys.exit(master.run())
