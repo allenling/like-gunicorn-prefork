@@ -10,13 +10,17 @@ import sys
 class Worker(object):
 
     def __init__(self):
-        signal.signal(signal.SIGABRT, self.abort)
+        self.alive = True
+        signal.signal(signal.SIGTERM, self.sigterm)
 
-    def abort(self, signum, frame):
-        print 'worker %s aborting' % os.getpid()
-        sys.exit(1)
+    def sigterm(self, signum, frame):
+        '''
+        sigterm means we should gracefully shutdown
+        '''
+        print 'worker %s terming with %s' % (os.getpid(), signum)
+        self.alive = False
 
     def run(self):
         print 'worker %s runing' % os.getpid()
-        while True:
+        while self.alive:
             time.sleep(3)
