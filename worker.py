@@ -8,9 +8,10 @@ import time
 
 class Worker(object):
 
-    def __init__(self, ppid):
+    def __init__(self, age, ppid):
         self.alive = True
         self.ppid = ppid
+        self.age = age
 
     def init_signals(self):
         signal.signal(signal.SIGTERM, self.sigterm)
@@ -36,3 +37,7 @@ class Worker(object):
             time.sleep(3)
             print 'worker %s running' % os.getpid()
             self.check_parent_alive()
+
+
+if __name__ == '__main__':
+    pass

@@ -8,6 +8,7 @@ import signal
 import errno
 import sys
 from worker import Worker
+from gunicorn.config import Workers
 
 
 class Master(object):
@@ -24,6 +25,7 @@ class Master(object):
         '''
         self.signals = deque([])
         self.workers = {}
+        self.age = 0
 
     def start(self):
         # initial resources, like create a connection vers
@@ -92,13 +94,18 @@ class Master(object):
             self.spawn_workers()
         elif len(self.workers) > self.worker_number:
             print 'kill extra workers'
+            wokrers = sorted(self.workers, key=lambda _: _.age)
+            while len(wokrers) > self.worker_number:
+                w = wokrers.pop(0)
+                self.kill_worker(w.keys[0], gracefully=True)
 
     def spawn_workers(self):
         '''
         create workers
         '''
         for _ in range(self.worker_number - len(self.workers)):
-            worker_object = Worker(os.getpid())
+            self.age += 1
+            worker_object = Worker(self.age, os.getpid())
             pid = os.fork()
             if pid != 0:
                 self.workers[pid] = worker_object
@@ -170,6 +177,15 @@ class Master(object):
         print 'master int'
         self.stop(gracefully=True)
 
+    def reload(self):
+        # TODO: reload
+        pass
+
+    def sighup(self):
+        self.reload()
+        # TODO: spawn new worker_number
+        self.manage_workers()
+
     def sigterm(self):
         print 'master terming'
         self.stop(gracefully=True)
@@ -183,6 +199,8 @@ class Master(object):
         Like gunicorn, just wake up master by writing a pipe to manager_workers or call manager_workers directly
 
         Or we just do noting, cause next loop in run method would call manage_workers
+
+        for waiting for worker exit eventually, we must use call back style to handle sigchld
         '''
         try:
             while True:
